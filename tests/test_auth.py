@@ -7,35 +7,72 @@ import os
 
 load_dotenv()  # โหลดค่าจาก .env
 
-@pytest.fixture(scope="module")
-def test_client():
-    t_db_uri = os.getenv("TEST_DATABASE_URI")  # ดึงค่าจาก .env
-    app = create_app(testing=True, test_db_uri=t_db_uri)
-
+def test_login_success(app, client):
     with app.app_context():
-        db.create_all()
-        yield app.test_client()
-        db.session.remove()
-        db.drop_all()
-        
-def test_login_success(test_client):
-    # Arrange: สร้าง user mock
-    user = User(name="test", email="test@example.com", password_hash="1234", role="user")
-    db.session.add(user)
-    db.session.commit()
+        user = User(
+            name="Tester",
+            email="tester@example.com",
+            password_hash="1234",
+            role="user",
+        )
+        db.session.add(user)
+        db.session.commit()
+        user_id = user.id
 
-    # Act: ยิง POST /login
-    response = test_client.post("/login", data={
-        "email": "test@example.com",
-        "password": "1234"
-    }, follow_redirects=True)
+    response = client.post(
+        "/login",
+        data={
+            "email": "tester@example.com",
+            "password": "1234",
+        },
+        follow_redirects=False,
+    )
 
-    # Assert: login สำเร็จ
-    assert b"login pass" in response.data or response.status_code == 200
+    assert response.status_code == 302
 
-def test_login_fail(test_client):
-    response = test_client.post("/login", data={
-        "email": "wrong@example.com",
-        "password": "wrong"
-    }, follow_redirects=True)
-    assert b"login fail" in response.data or response.status_code == 200
+    with client.session_transaction() as session:
+        assert session["user_id"] == user_id
+        assert session["user_name"] == "Tester"
+        assert session["user_role"] == "user"
+        assert session["user_email"] == "tester@example.com"
+
+
+def test_login_wrong_password(app, client):
+    with app.app_context():
+        user = User(
+            name="Tester",
+            email="tester@example.com",
+            password_hash="1234",
+            role="user",
+        )
+        db.session.add(user)
+        db.session.commit()
+
+    response = client.post(
+        "/login",
+        data={
+            "email": "tester@example.com",
+            "password": "wrong-password",
+        },
+    )
+
+    assert response.status_code == 200
+
+    with client.session_transaction() as session:
+        assert "user_id" not in session
+
+
+def test_login_unknown_email(client):
+    response = client.post(
+        "/login",
+        data={
+            "email": "unknown@example.com",
+            "password": "1234",
+        },
+    )
+
+    assert response.status_code == 200
+
+    with client.session_transaction() as session:
+        assert "user_id" not in session
+
